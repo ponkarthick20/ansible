@@ -1,0 +1,13 @@
+plugin: aws_ec2
+regions:
+  - us-east-1  # adjust to your region
+filters:
+  tag:Name: my_instance_dev
+keyed_groups:
+  - key: tags.Name
+    prefix: tag_Name_
+compose:
+  ansible_host: private_ip_address
+  ansible_user: ec2-user  # or ubuntu, depending on your AMI
+  ansible_ssh_private_key_file: /path/to/your-key.pem
+

@@ -1,0 +1,108 @@
+---
+- name: Deploy my_app
+  hosts: tag_Name_my_instance_dev
+  become: yes
+  vars:
+    git_branch: "{{ branch | default('main') }}"
+    temp_dir: "/tmp/my_app_clone"
+    app_dir: "/opt/my_app"
+    git_key_path: "{{ lookup('env', 'GIT_SSH_KEY_PATH') }}"  # Get from environment variable
+
+  tasks:
+    - name: Ensure webapps group exists
+      group:
+        name: webapps
+        gid: 570
+        state: present
+
+    - name: Create my_app_user
+      user:
+        name: my_app_user
+        uid: 1503
+        group: webapps
+        state: present
+
+    - name: Install required packages
+      yum:
+        name:
+          - python3-devel
+          - nginx
+          - git
+          - make
+        state: present
+
+    - name: Ensure temp directory exists
+      file:
+        path: "{{ temp_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Add SSH key for git
+      copy:
+        content: "{{ lookup('env', 'GIT_SSH_KEY') }}"  # Get from environment variable
+        dest: "{{ git_key_path }}"
+        mode: '0600'
+      no_log: true  # Prevents key from showing in logs
+
+    - name: Clone git repository
+      git:
+        repo: git@bitbucket.org:my-org/my_app.git
+        dest: "{{ temp_dir }}"
+        version: "{{ git_branch }}"
+        key_file: "{{ git_key_path }}"
+        accept_hostkey: yes
+
+    - name: Ensure app directory exists
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: my_app_user
+        group: webapps
+        mode: '0755'
+
+    - name: Copy application files
+      copy:
+        src: "{{ temp_dir }}/"
+        dest: "{{ app_dir }}"
+        remote_src: yes
+        owner: my_app_user
+        group: webapps
+
+    - name: Run make install with error handling
+      command: make install
+      args:
+        chdir: "{{ app_dir }}"
+      become: yes
+      become_user: my_app_user
+      register: make_result
+      failed_when: make_result.rc != 0
+      ignore_errors: yes
+
+    - name: Debug make install failure
+      debug:
+        msg: "Make install failed with error: {{ make_result.stderr }}"
+      when: make_result.rc != 0
+
+    - name: Restart nginx
+      service:
+        name: nginx
+        state: restarted
+
+    - name: Check nginx status
+      service_facts:
+      register: service_state
+      failed_when: >
+        'nginx.service' not in ansible_facts.services or
+        ansible_facts.services['nginx.service'].state != 'running'
+
+    - name: Clean up - remove temp directory
+      file:
+        path: "{{ temp_dir }}"
+        state: absent
+
+    - name: Clean up - remove git SSH key
+      file:
+        path: "{{ git_key_path }}"
+        state: absent
+      no_log: true
+
